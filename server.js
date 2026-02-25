@@ -111,9 +111,13 @@ async function connectToMongoDB(retries = 5, initialDelay = 500) {
         }
       }
     }
+    
+    console.error('❌ All MongoDB connection attempts failed');
+    connectionPromise = null;
+    return false;
+  })();
   
-  console.error('❌ All MongoDB connection attempts failed');
-  return false;
+  return connectionPromise;
 }
 
 // Initial connection attempt

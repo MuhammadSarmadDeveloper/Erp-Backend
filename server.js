@@ -19,8 +19,11 @@ if (!process.env.JWT_SECRET) {
 // MongoDB connection state
 let isConnected = false;
 
+// Global connection promise to prevent multiple simultaneous connection attempts
+let connectionPromise = null;
+
 // Serverless MongoDB connection function with retry logic
-async function connectToMongoDB(retries = 3, delay = 1000) {
+async function connectToMongoDB(retries = 5, initialDelay = 500) {
   // Check if MONGODB_URL is set
   if (!process.env.MONGODB_URL) {
     console.error('❌ MONGODB_URL not configured');
@@ -34,49 +37,80 @@ async function connectToMongoDB(retries = 3, delay = 1000) {
     return true;
   }
 
+  // If there's already a connection attempt in progress, wait for it
+  if (connectionPromise) {
+    console.log('⏳ Connection attempt already in progress, waiting...');
+    try {
+      return await connectionPromise;
+    } catch (error) {
+      console.error('❌ Waiting for connection failed:', error.message);
+      connectionPromise = null;
+    }
+  }
+
   // Check if currently connecting - wait for it
   if (mongoose.connection.readyState === 2) {
     console.log('⏳ MongoDB connection in progress, waiting...');
-    // Wait for connection to complete (max 5 seconds)
-    for (let i = 0; i < 10; i++) {
+    // Wait for connection to complete (max 10 seconds)
+    for (let i = 0; i < 20; i++) {
       await new Promise(resolve => setTimeout(resolve, 500));
       if (mongoose.connection.readyState === 1) {
         console.log('✅ Connection established');
         isConnected = true;
         return true;
       }
-    }
-  }
-
-  // Try to connect with retries
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      console.log(`🔄 Connecting to MongoDB (attempt ${attempt}/${retries})...`);
-      console.log(`📍 MongoDB URL: ${process.env.MONGODB_URL.substring(0, 20)}...`);
-      
-      await mongoose.connect(process.env.MONGODB_URL, {
-        serverSelectionTimeoutMS: 15000,
-        socketTimeoutMS: 45000,
-        family: 4, // Use IPv4, skip trying IPv6
-        maxPoolSize: 10,
-        minPoolSize: 2,
-      });
-      
-      isConnected = true;
-      console.log('✅ Connected to MongoDB successfully');
-      return true;
-    } catch (error) {
-      console.error(`❌ MongoDB connection attempt ${attempt} failed:`, error.message);
-      if (error.name) console.error(`   Error type: ${error.name}`);
-      isConnected = false;
-      
-      if (attempt < retries) {
-        console.log(`⏳ Retrying in ${delay}ms...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-        delay *= 2; // Exponential backoff
+      if (mongoose.connection.readyState === 0) {
+        console.log('⚠️ Connection failed, will retry');
+        break;
       }
     }
   }
+
+  // Create new connection promise
+  connectionPromise = (async () => {
+    let delay = initialDelay;
+    
+    // Try to connect with retries
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        console.log(`🔄 Connecting to MongoDB (attempt ${attempt}/${retries})...`);
+        console.log(`📍 Database: ${process.env.MONGODB_URL.includes('mongodb') ? 'MongoDB Atlas' : 'Unknown'}`);
+        
+        // Close any existing failed connections
+        if (mongoose.connection.readyState === 3) {
+          await mongoose.connection.close();
+        }
+        
+        await mongoose.connect(process.env.MONGODB_URL, {
+          serverSelectionTimeoutMS: 20000, // Increased for serverless cold starts
+          socketTimeoutMS: 45000,
+          connectTimeoutMS: 20000,
+          family: 4, // Use IPv4, skip trying IPv6
+          maxPoolSize: 10,
+          minPoolSize: 1,
+          retryWrites: true,
+          retryReads: true,
+        });
+        
+        isConnected = true;
+        console.log('✅ Connected to MongoDB successfully');
+        console.log(`📊 Connection state: ${mongoose.connection.readyState}`);
+        connectionPromise = null;
+        return true;
+      } catch (error) {
+        console.error(`❌ MongoDB connection attempt ${attempt} failed:`);
+        console.error(`   Message: ${error.message}`);
+        if (error.name) console.error(`   Error type: ${error.name}`);
+        if (error.code) console.error(`   Error code: ${error.code}`);
+        isConnected = false;
+        
+        if (attempt < retries) {
+          console.log(`⏳ Retrying in ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          delay = Math.min(delay * 1.5, 3000); // Exponential backoff with max 3s
+        }
+      }
+    }
   
   console.error('❌ All MongoDB connection attempts failed');
   return false;
@@ -171,59 +205,75 @@ app.get('/', (req, res) => {
 
 // Database connection middleware for serverless
 app.use(async (req, res, next) => {
-  // For critical routes, ensure connection before proceeding
-  const criticalRoutes = ['/api/auth/login', '/api/auth/register', '/api/auth/me'];
-  const isCriticalRoute = criticalRoutes.some(route => req.path === route);
+  // Skip middleware for root and health check routes
+  if (req.path === '/' || req.path === '/api/health') {
+    return next();
+  }
   
-  if (mongoose.connection.readyState === 0) {
-    console.log('🔄 Database disconnected, attempting to connect...');
+  // For all API routes, ensure connection before proceeding
+  const currentState = mongoose.connection.readyState;
+  
+  if (currentState === 0) {
+    console.log(`🔄 Database disconnected for ${req.method} ${req.path}, connecting...`);
     
-    if (isCriticalRoute) {
-      // For critical routes, wait for connection with more retries
-      const connected = await connectToMongoDB(5, 500);
-      if (!connected) {
-        console.error('❌ Failed to establish database connection for critical route');
-        return res.status(503).json({
-          success: false,
-          message: 'Database connection failed. Please try again later.',
-          code: 'DB_CONNECTION_FAILED'
-        });
-      }
-    } else {
-      // For non-critical routes, connect in background
-      connectToMongoDB().catch(err => {
-        console.error('Background connection failed:', err.message);
+    // Try to connect with retries
+    const connected = await connectToMongoDB(5, 500);
+    if (!connected) {
+      console.error(`❌ Failed to establish database connection for ${req.path}`);
+      return res.status(503).json({
+        success: false,
+        message: 'Database service is currently unavailable. Please try again in a moment.',
+        code: 'DB_CONNECTION_FAILED',
+        path: req.path
       });
     }
-  } else if (mongoose.connection.readyState === 2) {
+  } else if (currentState === 2) {
     // If connecting, wait for it to complete
-    if (isCriticalRoute) {
-      console.log('⏳ Waiting for connection to establish for critical route...');
-      // Wait up to 10 seconds for connection
-      for (let i = 0; i < 20; i++) {
-        await new Promise(resolve => setTimeout(resolve, 500));
-        if (mongoose.connection.readyState === 1) {
-          console.log('✅ Connection established during wait');
-          break;
-        }
-        if (mongoose.connection.readyState === 0) {
-          console.error('❌ Connection failed during wait');
+    console.log(`⏳ Waiting for connection to establish for ${req.method} ${req.path}...`);
+    // Wait up to 15 seconds for connection
+    for (let i = 0; i < 30; i++) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const newState = mongoose.connection.readyState;
+      
+      if (newState === 1) {
+        console.log('✅ Connection established during wait');
+        break;
+      }
+      if (newState === 0) {
+        console.error('❌ Connection failed during wait');
+        // Try one more time
+        const connected = await connectToMongoDB(3, 500);
+        if (!connected) {
           return res.status(503).json({
             success: false,
-            message: 'Database connection failed. Please try again.',
-            code: 'DB_CONNECTION_TIMEOUT'
+            message: 'Database connection timeout. Please try again.',
+            code: 'DB_CONNECTION_TIMEOUT',
+            path: req.path
           });
         }
-      }
-      // Final check
-      if (mongoose.connection.readyState !== 1) {
-        return res.status(503).json({
-          success: false,
-          message: 'Database connection timeout. Please try again.',
-          code: 'DB_CONNECTION_TIMEOUT'
-        });
+        break;
       }
     }
+    // Final check
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database connection timeout. Please try again.',
+        code: 'DB_CONNECTION_TIMEOUT',
+        path: req.path
+      });
+    }
+  }
+  
+  // Double check before proceeding
+  if (mongoose.connection.readyState !== 1) {
+    console.error(`❌ Database not ready (state: ${mongoose.connection.readyState}) for ${req.path}`);
+    return res.status(503).json({
+      success: false,
+      message: 'Database is not ready. Please try again.',
+      code: 'DB_NOT_READY',
+      path: req.path
+    });
   }
   
   next();

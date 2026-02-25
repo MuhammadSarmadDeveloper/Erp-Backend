@@ -6,11 +6,27 @@ const mongoose = require('mongoose');
 
 const app = express();
 
+// Validate required environment variables
+if (!process.env.MONGODB_URL) {
+  console.error('❌ FATAL: MONGODB_URL environment variable is not set');
+  console.error('Please set MONGODB_URL in your environment variables or .env file');
+}
+
+if (!process.env.JWT_SECRET) {
+  console.warn('⚠️  WARNING: JWT_SECRET not set, using default (not secure for production)');
+}
+
 // MongoDB connection state
 let isConnected = false;
 
 // Serverless MongoDB connection function with retry logic
 async function connectToMongoDB(retries = 3, delay = 1000) {
+  // Check if MONGODB_URL is set
+  if (!process.env.MONGODB_URL) {
+    console.error('❌ MONGODB_URL not configured');
+    return false;
+  }
+
   // Check if already connected
   if (mongoose.connection.readyState === 1) {
     console.log('✅ Using existing MongoDB connection');
@@ -36,6 +52,7 @@ async function connectToMongoDB(retries = 3, delay = 1000) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       console.log(`🔄 Connecting to MongoDB (attempt ${attempt}/${retries})...`);
+      console.log(`📍 MongoDB URL: ${process.env.MONGODB_URL.substring(0, 20)}...`);
       
       await mongoose.connect(process.env.MONGODB_URL, {
         serverSelectionTimeoutMS: 15000,
@@ -50,6 +67,7 @@ async function connectToMongoDB(retries = 3, delay = 1000) {
       return true;
     } catch (error) {
       console.error(`❌ MongoDB connection attempt ${attempt} failed:`, error.message);
+      if (error.name) console.error(`   Error type: ${error.name}`);
       isConnected = false;
       
       if (attempt < retries) {
@@ -161,10 +179,15 @@ app.use(async (req, res, next) => {
     console.log('🔄 Database disconnected, attempting to connect...');
     
     if (isCriticalRoute) {
-      // For critical routes, wait for connection
-      const connected = await connectToMongoDB(2, 500);
+      // For critical routes, wait for connection with more retries
+      const connected = await connectToMongoDB(5, 500);
       if (!connected) {
         console.error('❌ Failed to establish database connection for critical route');
+        return res.status(503).json({
+          success: false,
+          message: 'Database connection failed. Please try again later.',
+          code: 'DB_CONNECTION_FAILED'
+        });
       }
     } else {
       // For non-critical routes, connect in background
@@ -172,10 +195,35 @@ app.use(async (req, res, next) => {
         console.error('Background connection failed:', err.message);
       });
     }
-  } else if (mongoose.connection.readyState === 2 && isCriticalRoute) {
-    // If connecting and it's a critical route, wait a bit
-    console.log('⏳ Waiting for connection to establish for critical route...');
-    await new Promise(resolve => setTimeout(resolve, 1000));
+  } else if (mongoose.connection.readyState === 2) {
+    // If connecting, wait for it to complete
+    if (isCriticalRoute) {
+      console.log('⏳ Waiting for connection to establish for critical route...');
+      // Wait up to 10 seconds for connection
+      for (let i = 0; i < 20; i++) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        if (mongoose.connection.readyState === 1) {
+          console.log('✅ Connection established during wait');
+          break;
+        }
+        if (mongoose.connection.readyState === 0) {
+          console.error('❌ Connection failed during wait');
+          return res.status(503).json({
+            success: false,
+            message: 'Database connection failed. Please try again.',
+            code: 'DB_CONNECTION_TIMEOUT'
+          });
+        }
+      }
+      // Final check
+      if (mongoose.connection.readyState !== 1) {
+        return res.status(503).json({
+          success: false,
+          message: 'Database connection timeout. Please try again.',
+          code: 'DB_CONNECTION_TIMEOUT'
+        });
+      }
+    }
   }
   
   next();

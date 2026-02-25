@@ -54,28 +54,28 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password, role } = req.body;
 
-    // Check database connection with retry logic
-    const mongoose = require('mongoose');
-    let dbState = mongoose.connection.readyState;
-    
-    // If connecting, wait up to 3 seconds for connection to establish
-    if (dbState === 2) {
-      console.log('Waiting for database connection to establish...');
-      for (let i = 0; i < 6; i++) {
-        await new Promise(resolve => setTimeout(resolve, 500));
-        dbState = mongoose.connection.readyState;
-        if (dbState === 1) break;
-      }
-    }
-    
-    // If still not connected, return error
-    if (dbState !== 1) {
-      console.error(`Login failed: Database not connected (state: ${dbState})`);
-      return res.status(503).json({ 
-        success: false, 
-        message: 'Database connection not available. Please try again in a moment.'
+    // Validate input
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email and password are required'
       });
     }
+
+    // Database connection is handled by middleware, but double-check
+    const mongoose = require('mongoose');
+    const dbState = mongoose.connection.readyState;
+    
+    if (dbState !== 1) {
+      console.error(`Login failed: Database not ready (state: ${dbState})`);
+      return res.status(503).json({ 
+        success: false, 
+        message: 'Service temporarily unavailable. Please try again.',
+        code: 'DB_NOT_READY'
+      });
+    }
+
+    console.log(`Login attempt for: ${email}`);
 
     // Find user
     const user = await User.findOne({ email });

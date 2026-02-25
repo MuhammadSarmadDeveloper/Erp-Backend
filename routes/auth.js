@@ -54,6 +54,15 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password, role } = req.body;
 
+    // Check database connection
+    const mongoose = require('mongoose');
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ 
+        success: false, 
+        message: 'Database connection not available. Please try again in a moment.'
+      });
+    }
+
     // Find user
     const user = await User.findOne({ email });
     if (!user || !user.isActive) {
@@ -117,7 +126,20 @@ router.post('/login', async (req, res) => {
       token
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    console.error('Login error:', error);
+    
+    // Check if it's a database connection error
+    if (error.name === 'MongooseError' || error.message.includes('buffering timed out')) {
+      return res.status(503).json({ 
+        success: false, 
+        message: 'Database connection error. Please try again.' 
+      });
+    }
+    
+    res.status(500).json({ 
+      success: false, 
+      message: 'Login failed. Please try again.' 
+    });
   }
 });
 
@@ -130,6 +152,15 @@ router.post('/logout', (req, res) => {
 // Get current user
 router.get('/me', authMiddleware, async (req, res) => {
   try {
+    // Check database connection
+    const mongoose = require('mongoose');
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ 
+        success: false, 
+        message: 'Database connection not available. Please try again in a moment.'
+      });
+    }
+
     let userData = {
       id: req.user._id,
       email: req.user.email,
@@ -155,7 +186,20 @@ router.get('/me', authMiddleware, async (req, res) => {
 
     res.json({ success: true, user: userData });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    console.error('Get current user error:', error);
+    
+    // Check if it's a database connection error
+    if (error.name === 'MongooseError' || error.message.includes('buffering timed out')) {
+      return res.status(503).json({ 
+        success: false, 
+        message: 'Database connection error. Please try again.' 
+      });
+    }
+    
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch user data.' 
+    });
   }
 });
 

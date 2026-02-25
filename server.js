@@ -11,23 +11,61 @@ let isConnected = false;
 
 // Serverless MongoDB connection function
 async function connectToMongoDB() {
-  if (isConnected) {
+  // Check if already connected
+  if (mongoose.connection.readyState === 1) {
     console.log('✅ Using existing MongoDB connection');
-    return;
+    return true;
+  }
+
+  // Check if currently connecting
+  if (mongoose.connection.readyState === 2) {
+    console.log('⏳ MongoDB connection in progress...');
+    return true;
   }
 
   try {
     await mongoose.connect(process.env.MONGODB_URL, {
-      serverSelectionTimeoutMS: 5000,
+      serverSelectionTimeoutMS: 10000,
       socketTimeoutMS: 45000,
+      family: 4, // Use IPv4, skip trying IPv6
     });
     isConnected = true;
     console.log('✅ Connected to MongoDB');
+    return true;
   } catch (error) {
-    console.error('❌ MongoDB connection error:', error);
-    throw error;
+    console.error('❌ MongoDB connection error:', error.message);
+    isConnected = false;
+    return false;
   }
 }
+
+// Initial connection attempt
+connectToMongoDB().catch(err => {
+  console.error('Initial MongoDB connection failed:', err.message);
+});
+
+// MongoDB connection event handlers
+mongoose.connection.on('connected', () => {
+  console.log('🟢 Mongoose connected to MongoDB');
+  isConnected = true;
+});
+
+mongoose.connection.on('error', (err) => {
+  console.error('🔴 Mongoose connection error:', err.message);
+  isConnected = false;
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.log('🟡 Mongoose disconnected from MongoDB');
+  isConnected = false;
+});
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  await mongoose.connection.close();
+  console.log('MongoDB connection closed through app termination');
+  process.exit(0);
+});
 
 // Request logging middleware
 app.use((req, res, next) => {
@@ -59,18 +97,17 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // Cookie parser middleware
 app.use(cookieParser());
 
-// Database connection middleware for serverless
+// Database connection middleware for serverless (non-blocking)
 app.use(async (req, res, next) => {
-  try {
-    await connectToMongoDB();
-    next();
-  } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      message: 'Database connection failed',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+  // Only try to connect, don't block the request
+  if (mongoose.connection.readyState === 0) {
+    console.log('🔄 Attempting to connect to MongoDB...');
+    connectToMongoDB().catch(err => {
+      console.error('Connection attempt failed:', err.message);
     });
   }
+  // Continue regardless of connection state
+  next();
 });
 
 // Routes
@@ -91,11 +128,23 @@ app.use('/api/complaints', require('./routes/complaints'));
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
+  const dbStates = {
+    0: 'Disconnected',
+    1: 'Connected',
+    2: 'Connecting',
+    3: 'Disconnecting'
+  };
+  
+  const dbState = mongoose.connection.readyState;
+  
   res.json({ 
     status: 'OK', 
     message: 'Server is running',
     timestamp: new Date().toISOString(),
-    database: isConnected ? 'Connected' : 'Disconnected'
+    database: {
+      status: dbStates[dbState] || 'Unknown',
+      ready: dbState === 1
+    }
   });
 });
 

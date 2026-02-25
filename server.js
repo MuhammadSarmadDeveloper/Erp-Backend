@@ -9,34 +9,59 @@ const app = express();
 // MongoDB connection state
 let isConnected = false;
 
-// Serverless MongoDB connection function
-async function connectToMongoDB() {
+// Serverless MongoDB connection function with retry logic
+async function connectToMongoDB(retries = 3, delay = 1000) {
   // Check if already connected
   if (mongoose.connection.readyState === 1) {
     console.log('✅ Using existing MongoDB connection');
-    return true;
-  }
-
-  // Check if currently connecting
-  if (mongoose.connection.readyState === 2) {
-    console.log('⏳ MongoDB connection in progress...');
-    return true;
-  }
-
-  try {
-    await mongoose.connect(process.env.MONGODB_URL, {
-      serverSelectionTimeoutMS: 10000,
-      socketTimeoutMS: 45000,
-      family: 4, // Use IPv4, skip trying IPv6
-    });
     isConnected = true;
-    console.log('✅ Connected to MongoDB');
     return true;
-  } catch (error) {
-    console.error('❌ MongoDB connection error:', error.message);
-    isConnected = false;
-    return false;
   }
+
+  // Check if currently connecting - wait for it
+  if (mongoose.connection.readyState === 2) {
+    console.log('⏳ MongoDB connection in progress, waiting...');
+    // Wait for connection to complete (max 5 seconds)
+    for (let i = 0; i < 10; i++) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      if (mongoose.connection.readyState === 1) {
+        console.log('✅ Connection established');
+        isConnected = true;
+        return true;
+      }
+    }
+  }
+
+  // Try to connect with retries
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      console.log(`🔄 Connecting to MongoDB (attempt ${attempt}/${retries})...`);
+      
+      await mongoose.connect(process.env.MONGODB_URL, {
+        serverSelectionTimeoutMS: 15000,
+        socketTimeoutMS: 45000,
+        family: 4, // Use IPv4, skip trying IPv6
+        maxPoolSize: 10,
+        minPoolSize: 2,
+      });
+      
+      isConnected = true;
+      console.log('✅ Connected to MongoDB successfully');
+      return true;
+    } catch (error) {
+      console.error(`❌ MongoDB connection attempt ${attempt} failed:`, error.message);
+      isConnected = false;
+      
+      if (attempt < retries) {
+        console.log(`⏳ Retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        delay *= 2; // Exponential backoff
+      }
+    }
+  }
+  
+  console.error('❌ All MongoDB connection attempts failed');
+  return false;
 }
 
 // Initial connection attempt
@@ -97,16 +122,62 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // Cookie parser middleware
 app.use(cookieParser());
 
-// Database connection middleware for serverless (non-blocking)
+// Root route
+app.get('/', (req, res) => {
+  const dbStates = {
+    0: 'Disconnected',
+    1: 'Connected',
+    2: 'Connecting',
+    3: 'Disconnecting'
+  };
+  
+  res.json({
+    success: true,
+    message: 'School ERP Backend API Server',
+    version: '1.0.0',
+    status: 'Running',
+    timestamp: new Date().toISOString(),
+    database: {
+      status: dbStates[mongoose.connection.readyState] || 'Unknown',
+      ready: mongoose.connection.readyState === 1
+    },
+    endpoints: {
+      health: '/api/health',
+      auth: '/api/auth',
+      students: '/api/students',
+      teachers: '/api/teachers',
+      admin: '/api/admin'
+    }
+  });
+});
+
+// Database connection middleware for serverless
 app.use(async (req, res, next) => {
-  // Only try to connect, don't block the request
+  // For critical routes, ensure connection before proceeding
+  const criticalRoutes = ['/api/auth/login', '/api/auth/register', '/api/auth/me'];
+  const isCriticalRoute = criticalRoutes.some(route => req.path === route);
+  
   if (mongoose.connection.readyState === 0) {
-    console.log('🔄 Attempting to connect to MongoDB...');
-    connectToMongoDB().catch(err => {
-      console.error('Connection attempt failed:', err.message);
-    });
+    console.log('🔄 Database disconnected, attempting to connect...');
+    
+    if (isCriticalRoute) {
+      // For critical routes, wait for connection
+      const connected = await connectToMongoDB(2, 500);
+      if (!connected) {
+        console.error('❌ Failed to establish database connection for critical route');
+      }
+    } else {
+      // For non-critical routes, connect in background
+      connectToMongoDB().catch(err => {
+        console.error('Background connection failed:', err.message);
+      });
+    }
+  } else if (mongoose.connection.readyState === 2 && isCriticalRoute) {
+    // If connecting and it's a critical route, wait a bit
+    console.log('⏳ Waiting for connection to establish for critical route...');
+    await new Promise(resolve => setTimeout(resolve, 1000));
   }
-  // Continue regardless of connection state
+  
   next();
 });
 

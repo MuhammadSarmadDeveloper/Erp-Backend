@@ -54,9 +54,23 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password, role } = req.body;
 
-    // Check database connection
+    // Check database connection with retry logic
     const mongoose = require('mongoose');
-    if (mongoose.connection.readyState !== 1) {
+    let dbState = mongoose.connection.readyState;
+    
+    // If connecting, wait up to 3 seconds for connection to establish
+    if (dbState === 2) {
+      console.log('Waiting for database connection to establish...');
+      for (let i = 0; i < 6; i++) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        dbState = mongoose.connection.readyState;
+        if (dbState === 1) break;
+      }
+    }
+    
+    // If still not connected, return error
+    if (dbState !== 1) {
+      console.error(`Login failed: Database not connected (state: ${dbState})`);
       return res.status(503).json({ 
         success: false, 
         message: 'Database connection not available. Please try again in a moment.'
@@ -152,9 +166,23 @@ router.post('/logout', (req, res) => {
 // Get current user
 router.get('/me', authMiddleware, async (req, res) => {
   try {
-    // Check database connection
+    // Check database connection with retry logic
     const mongoose = require('mongoose');
-    if (mongoose.connection.readyState !== 1) {
+    let dbState = mongoose.connection.readyState;
+    
+    // If connecting, wait up to 2 seconds for connection to establish
+    if (dbState === 2) {
+      console.log('Waiting for database connection to establish...');
+      for (let i = 0; i < 4; i++) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        dbState = mongoose.connection.readyState;
+        if (dbState === 1) break;
+      }
+    }
+    
+    // If still not connected, return error
+    if (dbState !== 1) {
+      console.error(`Get user failed: Database not connected (state: ${dbState})`);
       return res.status(503).json({ 
         success: false, 
         message: 'Database connection not available. Please try again in a moment.'

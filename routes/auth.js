@@ -54,17 +54,7 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password, role } = req.body;
 
-    // Validate input
-    if (!email || !password) {
-      return res.status(400).json({
-        success: false,
-        message: 'Email and password are required'
-      });
-    }
-
-    console.log(`🔐 Login attempt for: ${email} as ${role || 'any role'}`);
-
-    // Find user (database connection is guaranteed by middleware)
+    // Find user
     const user = await User.findOne({ email });
     if (!user || !user.isActive) {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
@@ -127,20 +117,7 @@ router.post('/login', async (req, res) => {
       token
     });
   } catch (error) {
-    console.error('Login error:', error);
-    
-    // Check if it's a database connection error
-    if (error.name === 'MongooseError' || error.message.includes('buffering timed out')) {
-      return res.status(503).json({ 
-        success: false, 
-        message: 'Database connection error. Please try again.' 
-      });
-    }
-    
-    res.status(500).json({ 
-      success: false, 
-      message: 'Login failed. Please try again.' 
-    });
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
@@ -178,20 +155,7 @@ router.get('/me', authMiddleware, async (req, res) => {
 
     res.json({ success: true, user: userData });
   } catch (error) {
-    console.error('Get current user error:', error);
-    
-    // Check if it's a database connection error
-    if (error.name === 'MongooseError' || error.message.includes('buffering timed out')) {
-      return res.status(503).json({ 
-        success: false, 
-        message: 'Database connection error. Please try again.' 
-      });
-    }
-    
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to fetch user data.' 
-    });
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 

@@ -34,7 +34,7 @@ router.get('/records', authMiddleware, async (req, res) => {
     const salaryRecords = await Salary.find(query)
       .populate({
         path: 'teacherId',
-        select: 'employeeId userId',
+        select: 'employeeId userId fullName',
         populate: {
           path: 'userId',
           select: 'fullName email'
@@ -62,7 +62,7 @@ router.get('/records/:id', authMiddleware, async (req, res) => {
     const salaryRecord = await Salary.findById(req.params.id)
       .populate({
         path: 'teacherId',
-        select: 'employeeId userId',
+        select: 'employeeId userId fullName',
         populate: {
           path: 'userId',
           select: 'fullName email'
@@ -158,7 +158,7 @@ router.post('/create', authMiddleware, async (req, res) => {
     // Populate teacher details before sending response
     await salaryRecord.populate({
       path: 'teacherId',
-      select: 'employeeId userId',
+      select: 'employeeId userId fullName',
       populate: {
         path: 'userId',
         select: 'fullName email'
@@ -212,7 +212,7 @@ router.put('/update/:id', authMiddleware, async (req, res) => {
     // Populate teacher details before sending response
     await salaryRecord.populate({
       path: 'teacherId',
-      select: 'employeeId userId',
+      select: 'employeeId userId fullName',
       populate: {
         path: 'userId',
         select: 'fullName email'

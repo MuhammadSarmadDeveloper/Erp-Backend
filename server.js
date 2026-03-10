@@ -34,26 +34,31 @@ app.use(cookieParser());
 let isConnected = false;
 
 async function connectToMongoDB() {
+  if (isConnected) return;
   try {
     await mongoose.connect(process.env.MONGODB_URL, {
       useNewUrlParser: true,
-      useUnifiedTopology: true
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 10000,
+      socketTimeoutMS: 45000,
     });
     isConnected = true;
     console.log('Connected to MongoDB');
   } catch (error) {
+    isConnected = false;
     console.error('Error connecting to MongoDB:', error);
+    throw error;
   }
 }
 
-connectToMongoDB();
-
-// add middleware
-app.use((req, res, next) => {
-  if (!isConnected) {
-    connectToMongoDB();
+// add middleware — await connection before every request (required for Vercel serverless)
+app.use(async (req, res, next) => {
+  try {
+    await connectToMongoDB();
+    next();
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Database connection failed' });
   }
-  next();
 })
 
 // Routes

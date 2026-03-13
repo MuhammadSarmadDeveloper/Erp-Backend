@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
-const mongoose = require('mongoose');
+const { connectDB } = require('./db/connection');
 
 const app = express();
 
@@ -20,45 +20,18 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cookieParser());
 
-// Database connection with retry logic
-let isConnected = false;
-
-const connectDB = async () => {
-  if (isConnected) return;
-  
-  try {
-    await mongoose.connect(process.env.MONGODB_URL, {
-      maxPoolSize: 5,
-      serverSelectionTimeoutMS: 5000,
-      socketTimeoutMS: 45000,
-      retryWrites: true,
-    });
-    isConnected = true;
-    console.log('✅ Connected to MongoDB');
-  } catch (err) {
-    console.error('❌ MongoDB connection error:', err);
-    isConnected = false;
-    // Retry after 5 seconds
-    setTimeout(connectDB, 5000);
-  }
-};
-
-// Connect to database
-connectDB();
-
-// Middleware to ensure DB connection before processing requests
+// Database connection middleware
 app.use(async (req, res, next) => {
-  if (!isConnected) {
-    try {
-      await connectDB();
-    } catch (error) {
-      return res.status(503).json({ 
-        success: false, 
-        message: 'Database connection failed. Please try again.' 
-      });
-    }
+  try {
+    await connectDB();
+    next();
+  } catch (error) {
+    console.error('Database connection failed:', error);
+    return res.status(503).json({ 
+      success: false, 
+      message: 'Database temporarily unavailable. Please try again.' 
+    });
   }
-  next();
 });
 
 // Routes
@@ -78,8 +51,13 @@ app.use('/api/announcements', require('./routes/announcements'));
 app.use('/api/complaints', require('./routes/complaints'));
 
 // Health check
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', message: 'Server is running', dbConnected: isConnected });
+app.get('/api/health', async (req, res) => {
+  try {
+    await connectDB();
+    res.json({ status: 'OK', message: 'Server is running', dbConnected: true });
+  } catch (error) {
+    res.status(503).json({ status: 'ERROR', message: 'Database connection failed', dbConnected: false });
+  }
 });
 
 // Log all requests

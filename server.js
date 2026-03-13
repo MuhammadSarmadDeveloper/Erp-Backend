@@ -82,10 +82,26 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
+// Root endpoint
+app.get('/', (req, res) => {
+  res.json({ status: 'OK', message: 'School ERP API Server', version: '1.0.0' });
+});
+
 // Log all requests
 app.use((req, res, next) => {
   console.log(`${req.method} ${req.path}`);
   next();
+});
+
+// 404 handler
+app.use((req, res) => {
+  console.warn(`404 Not Found: ${req.method} ${req.path}`);
+  res.status(404).json({ 
+    success: false, 
+    message: `Route not found: ${req.method} ${req.path}`,
+    path: req.path,
+    method: req.method
+  });
 });
 
 // Error handling

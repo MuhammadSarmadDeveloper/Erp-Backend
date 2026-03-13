@@ -37,6 +37,9 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cookieParser());
 
+// Add explicit OPTIONS handler for preflight requests
+app.options('*', cors(corsOptions));
+
 // Database connection middleware - skip for OPTIONS requests
 app.use(async (req, res, next) => {
   // Skip DB connection for OPTIONS preflight requests
@@ -54,6 +57,32 @@ app.use(async (req, res, next) => {
       message: 'Database temporarily unavailable. Please try again.' 
     });
   }
+});
+
+// Global error handling middleware (after all routes)
+app.use((err, req, res, next) => {
+  console.error('Global error handler:', err);
+  
+  // Make sure CORS headers are sent even on errors
+  const origin = req.headers.origin;
+  const allowedOrigins = [
+    'http://localhost:5173',
+    'http://localhost:5174',
+    'https://erp-school-omega.vercel.app',
+    'https://www.erp-school-omega.vercel.app',
+    'https://erp-school-vercel.app',
+    'https://www.erp-school-vercel.app'
+  ];
+  
+  if (!origin || allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
+  
+  res.status(err.status || 500).json({ 
+    success: false, 
+    message: err.message || 'Internal server error' 
+  });
 });
 
 // Routes
@@ -118,5 +147,6 @@ const PORT = process.env.PORT || 5000;
 if (process.env.NODE_ENV !== 'production') {
   app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
+
   });
 }

@@ -9,7 +9,7 @@ const app = express();
 // Middleware
 app.use(cors({
   origin: process.env.NODE_ENV === 'production' 
-    ? ['https://erp-school-vercel.app', 'https://www.erp-school-vercel.app'] // Add your frontend production URLs here
+    ? ['https://erp-school-omega.vercel.app', 'https://www.erp-school-omega.vercel.app', 'https://erp-school-vercel.app', 'https://www.erp-school-vercel.app']
     : ['http://localhost:5173', 'http://localhost:5174'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],

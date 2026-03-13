@@ -37,9 +37,6 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cookieParser());
 
-// Add explicit OPTIONS handler for preflight requests
-app.options('*', cors(corsOptions));
-
 // Database connection middleware - skip for OPTIONS requests
 app.use(async (req, res, next) => {
   // Skip DB connection for OPTIONS preflight requests

@@ -6,20 +6,33 @@ const { connectDB } = require('./db/connection');
 
 const app = express();
 
-// Middleware
-app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
-    ? ['https://erp-school-omega.vercel.app', 'https://www.erp-school-omega.vercel.app', 'https://erp-school-vercel.app', 'https://www.erp-school-vercel.app']
-    : ['http://localhost:5173', 'http://localhost:5174'],
+// CORS Configuration - More permissive for serverless
+const corsOptions = {
+  origin: (origin, callback) => {
+    const allowedOrigins = [
+      'http://localhost:5173',
+      'http://localhost:5174',
+      'https://erp-school-omega.vercel.app',
+      'https://www.erp-school-omega.vercel.app',
+      'https://erp-school-vercel.app',
+      'https://www.erp-school-vercel.app'
+    ];
+    
+    // Allow requests with no origin (like mobile apps or curl)
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('CORS not allowed'));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  exposedHeaders: ['set-cookie']
-}));
+  exposedHeaders: ['set-cookie'],
+  optionsSuccessStatus: 200
+};
 
-// Handle preflight requests
-app.options('*', cors());
-
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cookieParser());

@@ -301,6 +301,7 @@ router.post('/create-user', authMiddleware, adminMiddleware, async (req, res) =>
 
       await Teacher.create({
         userId: user._id,
+        fullName: fullName,
         employeeId,
         assignedClasses: classesArray,
         profileImage: profileImage || null,

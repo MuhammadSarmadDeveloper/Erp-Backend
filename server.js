@@ -20,10 +20,46 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cookieParser());
 
-// Database connection
-mongoose.connect(process.env.MONGODB_URL)
-  .then(() => console.log('✅ Connected to MongoDB'))
-  .catch((err) => console.error('❌ MongoDB connection error:', err));
+// Database connection with retry logic
+let isConnected = false;
+
+const connectDB = async () => {
+  if (isConnected) return;
+  
+  try {
+    await mongoose.connect(process.env.MONGODB_URL, {
+      maxPoolSize: 5,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+      retryWrites: true,
+    });
+    isConnected = true;
+    console.log('✅ Connected to MongoDB');
+  } catch (err) {
+    console.error('❌ MongoDB connection error:', err);
+    isConnected = false;
+    // Retry after 5 seconds
+    setTimeout(connectDB, 5000);
+  }
+};
+
+// Connect to database
+connectDB();
+
+// Middleware to ensure DB connection before processing requests
+app.use(async (req, res, next) => {
+  if (!isConnected) {
+    try {
+      await connectDB();
+    } catch (error) {
+      return res.status(503).json({ 
+        success: false, 
+        message: 'Database connection failed. Please try again.' 
+      });
+    }
+  }
+  next();
+});
 
 // Routes
 app.use('/api/auth', require('./routes/auth'));
@@ -43,7 +79,7 @@ app.use('/api/complaints', require('./routes/complaints'));
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', message: 'Server is running' });
+  res.json({ status: 'OK', message: 'Server is running', dbConnected: isConnected });
 });
 
 // Log all requests

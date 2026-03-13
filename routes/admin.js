@@ -238,6 +238,14 @@ router.post('/create-user', authMiddleware, adminMiddleware, async (req, res) =>
       address
     } = req.body;
 
+    // Validate required fields
+    if (!email || !password || !fullName || !role) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Missing required fields: email, password, fullName, role' 
+      });
+    }
+
     // Check if user exists
     const existingUser = await User.findOne({ email });
     if (existingUser) {
@@ -255,6 +263,13 @@ router.post('/create-user', authMiddleware, adminMiddleware, async (req, res) =>
 
     // Create role-specific profile
     if (role === 'student') {
+      if (!rollNumber || !className || !section) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Student requires: rollNumber, class, section' 
+        });
+      }
+      
       await Student.create({
         userId: user._id,
         rollNumber,
@@ -267,6 +282,13 @@ router.post('/create-user', authMiddleware, adminMiddleware, async (req, res) =>
         parentPhone: parentPhone || null
       });
     } else if (role === 'teacher') {
+      if (!employeeId) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Teacher requires: employeeId' 
+        });
+      }
+
       // Build assigned classes array
       let classesArray = assignedClasses || [];
       if (assignedClass && assignedSection) {
@@ -300,7 +322,12 @@ router.post('/create-user', authMiddleware, adminMiddleware, async (req, res) =>
       }
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    console.error('Create user error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message || 'Error creating user',
+      error: error.message 
+    });
   }
 });
 

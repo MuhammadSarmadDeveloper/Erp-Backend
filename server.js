@@ -59,32 +59,6 @@ app.use(async (req, res, next) => {
   }
 });
 
-// Global error handling middleware (after all routes)
-app.use((err, req, res, next) => {
-  console.error('Global error handler:', err);
-  
-  // Make sure CORS headers are sent even on errors
-  const origin = req.headers.origin;
-  const allowedOrigins = [
-    'http://localhost:5173',
-    'http://localhost:5174',
-    'https://erp-school-omega.vercel.app',
-    'https://www.erp-school-omega.vercel.app',
-    'https://erp-school-vercel.app',
-    'https://www.erp-school-vercel.app'
-  ];
-  
-  if (!origin || allowedOrigins.includes(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin || '*');
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-  }
-  
-  res.status(err.status || 500).json({ 
-    success: false, 
-    message: err.message || 'Internal server error' 
-  });
-});
-
 // Routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/students', require('./routes/students'));
@@ -122,9 +96,24 @@ app.use((req, res, next) => {
   next();
 });
 
-// 404 handler
+// 404 handler with CORS support
 app.use((req, res) => {
   console.warn(`404 Not Found: ${req.method} ${req.path}`);
+  const origin = req.headers.origin;
+  const allowedOrigins = [
+    'http://localhost:5173',
+    'http://localhost:5174',
+    'https://erp-school-omega.vercel.app',
+    'https://www.erp-school-omega.vercel.app',
+    'https://erp-school-vercel.app',
+    'https://www.erp-school-vercel.app'
+  ];
+  
+  if (!origin || allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
+  
   res.status(404).json({ 
     success: false, 
     message: `Route not found: ${req.method} ${req.path}`,
@@ -133,10 +122,25 @@ app.use((req, res) => {
   });
 });
 
-// Error handling
+// Error handling with CORS support
 app.use((err, req, res, next) => {
   console.error('Global error handler:', err.stack);
-  res.status(500).json({ success: false, message: err.message || 'Something went wrong!' });
+  const origin = req.headers.origin;
+  const allowedOrigins = [
+    'http://localhost:5173',
+    'http://localhost:5174',
+    'https://erp-school-omega.vercel.app',
+    'https://www.erp-school-omega.vercel.app',
+    'https://erp-school-vercel.app',
+    'https://www.erp-school-vercel.app'
+  ];
+  
+  if (!origin || allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
+  
+  res.status(err.status || 500).json({ success: false, message: err.message || 'Something went wrong!' });
 });
 
 // Export app for Vercel serverless
